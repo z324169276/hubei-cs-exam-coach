@@ -9,9 +9,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.join(__dirname, 'data');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const DB_FILE = path.join(DATA_DIR, 'questions.json');
+const SEED_FILE = path.join(DATA_DIR, 'questions.seed.json');
 const PAPER_FILE = path.join(DATA_DIR, 'papers.json');
 const SUBMISSION_FILE = path.join(DATA_DIR, 'submissions.json');
 const KNOWLEDGE_FILE = path.join(DATA_DIR, 'knowledge.json');
+const GRAPH_FILE = path.join(DATA_DIR, 'graph.json');
 const PORT = Number(process.env.PORT) || 3100;
 
 /** 局域网 IPv4：跳过虚拟机、容器等虚拟网卡，返回网卡名方便前端挑主网卡 */
@@ -41,6 +43,17 @@ const knowledge = JSON.parse(fs.readFileSync(KNOWLEDGE_FILE, 'utf8'));
 const MODULE_IDS = new Set(knowledge.modules.map((m) => m.id));
 const POINT_IDS = new Set(knowledge.modules.flatMap((m) => m.points.map((p) => p.id)));
 
+/** 知识点依赖图：读不到或损坏时退化成空边集，保证服务与诊断接口仍可用 */
+let graph = { version: 1, updatedAt: null, edges: [] };
+if (fs.existsSync(GRAPH_FILE)) {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(GRAPH_FILE, 'utf8'));
+    if (Array.isArray(parsed.edges)) graph = parsed;
+  } catch (err) {
+    console.warn('[store] 知识图谱文件损坏，已忽略:', err.message);
+  }
+}
+
 let db = { version: 1, items: [] };
 if (fs.existsSync(DB_FILE)) {
   try {
@@ -48,6 +61,16 @@ if (fs.existsSync(DB_FILE)) {
     if (!Array.isArray(db.items)) db.items = [];
   } catch (err) {
     console.warn('[store] 题库文件损坏，已重置:', err.message);
+  }
+} else if (fs.existsSync(SEED_FILE)) {
+  // 首次运行：用随仓库分发的种子题库初始化，之后读写的是本机 questions.json
+  try {
+    db = JSON.parse(fs.readFileSync(SEED_FILE, 'utf8'));
+    if (!Array.isArray(db.items)) db.items = [];
+    console.log(`[store] 已从种子题库导入 ${db.items.length} 道题`);
+  } catch (err) {
+    console.warn('[store] 种子题库读取失败:', err.message);
+    db = { version: 1, items: [] };
   }
 }
 
@@ -501,11 +524,30 @@ function pickQuestions({ modules, points, counts }) {
   for (const { type } of TYPE_SECTIONS) {
     const want = Number(counts[type]) || 0;
     if (!want) continue;
-    const list = shuffle(pool.filter((it) => it.type === type));
+    const list = pool.filter((it) => it.type === type);
     if (list.length < want) {
       shortage.push(`${TYPE_LABEL[type]}需要 ${want} 道，题库中符合条件的只有 ${list.length} 道`);
     }
-    picked.push(...list.slice(0, want));
+
+    // 按知识点分桶后轮转抽取：每一轮每个知识点最多出 1 题，
+    // 避免一份卷子扎堆在同一个知识点上（否则该卷未覆盖的知识点会一直「未测」）。
+    const buckets = new Map();
+    for (const it of shuffle(list)) {
+      const hit = (it.points || []).filter((p) => !points.length || points.includes(p));
+      const key = hit[0] || (it.points || [])[0] || '_untagged';
+      if (!buckets.has(key)) buckets.set(key, []);
+      buckets.get(key).push(it);
+    }
+
+    const queues = shuffle([...buckets.values()]);
+    const chosen = [];
+    while (chosen.length < want && queues.some((q) => q.length)) {
+      for (const q of queues) {
+        if (chosen.length >= want) break;
+        if (q.length) chosen.push(q.shift());
+      }
+    }
+    picked.push(...chosen);
   }
 
   return { picked, shortage };
@@ -680,6 +722,160 @@ function buildSubmissionDetail(sub, paper) {
   });
 }
 
+/** 知识图谱：把 knowledge.json 摊平成节点，边直接透传 graph.json */
+function graphPayload() {
+  const nodes = knowledge.modules.flatMap((m) =>
+    m.points.map((p) => ({ id: p.id, name: p.name, module: m.id, moduleName: m.name, type: m.type })),
+  );
+  const modules = knowledge.modules.map((m) => ({
+    id: m.id,
+    name: m.name,
+    count: m.count,
+    score: m.score,
+    pointCount: m.points.length,
+  }));
+  return { nodes, edges: graph.edges, modules };
+}
+
+function masteryLevel(attempts, mastery) {
+  if (!attempts) return '未测';
+  if (mastery >= 0.8) return '掌握';
+  if (mastery >= 0.6) return '待巩固';
+  return '薄弱';
+}
+
+/**
+ * 按知识点聚合历史答卷，并对薄弱点回溯上游根因。
+ * 操作题只算老师批改过（manual.score）的，没批改就跳过、不计入分母。
+ */
+function diagnose({ name, className, paperId }) {
+  const trim = (v) => String(v || '').trim();
+  const scope = { name: trim(name), className: trim(className), paperId: trim(paperId) };
+
+  let subs = submissions.items.slice();
+  if (scope.name) subs = subs.filter((s) => s.name === scope.name);
+  if (scope.className) subs = subs.filter((s) => s.className === scope.className);
+  if (scope.paperId) subs = subs.filter((s) => s.paperId === scope.paperId);
+
+  const cellMap = new Map();
+  for (const m of knowledge.modules) {
+    for (const p of m.points) {
+      cellMap.set(p.id, {
+        id: p.id,
+        name: p.name,
+        module: m.id,
+        moduleName: m.name,
+        attempts: 0,
+        score: 0,
+      });
+    }
+  }
+
+  const paperMap = new Map(papers.items.map((p) => [p.id, p]));
+  let submissionCount = 0;
+
+  for (const sub of subs) {
+    const paper = paperMap.get(sub.paperId);
+    if (!paper) continue;
+    submissionCount += 1;
+
+    for (const q of paper.items) {
+      let value;
+      if (q.type === 'operation') {
+        const manual = sub.manual?.[q.id];
+        if (!manual) continue;
+        value = Number(manual.score) || 0;
+      } else {
+        value = gradeOne(q, sub.answers?.[q.id]) ? 1 : 0;
+      }
+      for (const pid of q.points || []) {
+        const cell = cellMap.get(pid);
+        if (!cell) continue;
+        cell.attempts += 1;
+        cell.score += value;
+      }
+    }
+  }
+
+  const points = [...cellMap.values()].map((cell) => {
+    const mastery = cell.attempts ? Math.round((cell.score / cell.attempts) * 100) / 100 : null;
+    return { ...cell, mastery, level: masteryLevel(cell.attempts, mastery) };
+  });
+  const pointMap = new Map(points.map((p) => [p.id, p]));
+
+  const causeMap = new Map();
+  const needsMap = new Map();
+
+  for (const weak of points) {
+    if (weak.level !== '薄弱') continue;
+    for (const edge of graph.edges) {
+      if (edge.to !== weak.id) continue;
+      const from = pointMap.get(edge.from);
+      if (!from) continue;
+
+      if (!from.attempts) {
+        const item = needsMap.get(from.id) || { id: from.id, name: from.name, reasons: new Set() };
+        item.reasons.add(`${weak.id} ${weak.name}`);
+        needsMap.set(from.id, item);
+        continue;
+      }
+
+      if (!(from.mastery < 0.8)) continue;
+      const contrib = (0.8 - from.mastery) * (Number(edge.strength) || 0);
+      const cause = causeMap.get(from.id) || {
+        id: from.id,
+        name: from.name,
+        mastery: from.mastery,
+        contrib: 0,
+        forPoints: new Set(),
+        notes: new Set(),
+      };
+      cause.contrib += contrib;
+      cause.forPoints.add(weak.id);
+      if (edge.note) cause.notes.add(edge.note);
+      causeMap.set(from.id, cause);
+    }
+  }
+
+  const rootCauses = [...causeMap.values()]
+    .map((c) => ({
+      id: c.id,
+      name: c.name,
+      mastery: c.mastery,
+      contrib: Math.round(c.contrib * 1000) / 1000,
+      forPoints: [...c.forPoints],
+      note: [...c.notes].join('；'),
+    }))
+    .sort((a, b) => b.contrib - a.contrib)
+    .slice(0, 5);
+
+  const needsTesting = [...needsMap.values()].map((n) => ({
+    id: n.id,
+    name: n.name,
+    reason: `「${[...n.reasons].join('」「')}」的薄弱可能源于它，但这个知识点还没有作答记录`,
+  }));
+
+  const testedPoints = points.filter((p) => p.attempts > 0);
+  const averageMastery = testedPoints.length
+    ? Math.round((testedPoints.reduce((sum, p) => sum + p.mastery, 0) / testedPoints.length) * 100) / 100
+    : 0;
+
+  return {
+    scope: { ...scope, submissionCount },
+    summary: {
+      pointTotal: points.length,
+      tested: testedPoints.length,
+      weak: points.filter((p) => p.level === '薄弱').length,
+      solid: points.filter((p) => p.level === '掌握').length,
+      untested: points.filter((p) => p.level === '未测').length,
+      averageMastery,
+    },
+    points,
+    rootCauses,
+    needsTesting,
+  };
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   const { pathname } = url;
@@ -695,6 +891,18 @@ const server = http.createServer(async (req, res) => {
 
     if (pathname === '/api/stats') {
       return sendJson(res, 200, { ...stats(), paperCount: papers.items.length });
+    }
+
+    if (pathname === '/api/graph') {
+      return sendJson(res, 200, graphPayload());
+    }
+
+    if (pathname === '/api/diagnose') {
+      return sendJson(res, 200, diagnose({
+        name: url.searchParams.get('name'),
+        className: url.searchParams.get('className'),
+        paperId: url.searchParams.get('paperId'),
+      }));
     }
 
     if (pathname === '/api/papers' && req.method === 'GET') {
@@ -966,6 +1174,10 @@ const server = http.createServer(async (req, res) => {
 
     if (pathname === '/wrong') {
       return serveFile(res, 'wrong.html');
+    }
+
+    if (pathname === '/graph') {
+      return serveFile(res, 'graph.html');
     }
 
     if (pathname === '/api/questions' && req.method === 'GET') {

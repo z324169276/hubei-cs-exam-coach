@@ -18,6 +18,12 @@
       padding: 14px 18px; background: var(--panel); border-bottom: 1px solid var(--line);
     }
     .top h1 { margin: 0; font-size: 16px; }
+    .top .nav { display: flex; align-items: center; gap: 10px; }
+    .top .nav a {
+      font-size: 13px; color: var(--accent); text-decoration: none;
+      border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 6px 12px;
+    }
+    .top .nav a:hover { background: #f0f2f6; }
     .top .clear {
       border: 1px solid var(--line); background: #fff; color: var(--muted);
       border-radius: 8px; padding: 6px 12px; font-size: 13px; cursor: pointer;
@@ -54,7 +60,10 @@
 <body>
   <div class="top">
     <h1>我的错题本</h1>
-    <button class="clear" type="button" id="btnClear">清空记录</button>
+    <div class="nav">
+      <a href="/graph">知识图谱</a>
+      <button class="clear" type="button" id="btnClear">清空记录</button>
+    </div>
   </div>
   <div class="main" id="app"></div>
 
