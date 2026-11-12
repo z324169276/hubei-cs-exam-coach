@@ -1,0 +1,22 @@
+{
+  "name": "hubei-cs-exam-coach",
+  "version": "0.1.0",
+  "private": false,
+  "type": "module",
+  "description": "湖北技能高考计算机类 · 师生错题工作台：AI 试卷录入、按知识点出卷、在线答题、错题统计与操作题批改",
+  "keywords": [
+    "技能高考",
+    "中职",
+    "计算机",
+    "错题本",
+    "组卷",
+    "教育"
+  ],
+  "license": "MIT",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

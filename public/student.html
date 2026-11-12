@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>练习卷</title>
+<link rel="stylesheet" href="/student.css" />
+</head>
+<body>
+<header class="s-top">
+  <h1 id="paperTitle">加载中…</h1>
+  <p id="paperMeta"></p>
+</header>
+
+<main class="s-main">
+  <section class="s-card identity" id="identityCard">
+    <div class="s-row">
+      <input id="sName" placeholder="姓名（可不填）" autocomplete="name" />
+      <input id="sClass" placeholder="班级（可不填）" />
+    </div>
+    <p class="s-tip">答题后点底部按钮提交，客观题会自动判分。</p>
+  </section>
+
+  <form id="quiz" class="s-form"></form>
+
+  <section id="result" class="s-result" hidden></section>
+</main>
+
+<footer class="s-bar" id="submitBar" hidden>
+  <span class="s-progress" id="progress">已答 0 / 0</span>
+  <button type="button" id="btnSubmit">提交答卷</button>
+</footer>
+
+<script src="/student.js"></script>
+</body>
+</html>

@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>我的错题本</title>
+  <style>
+    :root { --bg: #f5f6f8; --panel: #fff; --line: #e3e6eb; --text: #1c2230; --muted: #6b7484; --accent: #2f6bff; --danger: #d64550; --ok: #1f8a5b; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--bg); color: var(--text);
+      font: 15px/1.6 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+      padding-bottom: 40px;
+    }
+    .top {
+      position: sticky; top: 0; z-index: 10;
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      padding: 14px 18px; background: var(--panel); border-bottom: 1px solid var(--line);
+    }
+    .top h1 { margin: 0; font-size: 16px; }
+    .top .clear {
+      border: 1px solid var(--line); background: #fff; color: var(--muted);
+      border-radius: 8px; padding: 6px 12px; font-size: 13px; cursor: pointer;
+    }
+    .main { max-width: 720px; margin: 0 auto; padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+    .sheet { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+    .sheet-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+    .sheet-head h2 { margin: 0; font-size: 15px; }
+    .sheet-meta { font-size: 12px; color: var(--muted); }
+    .item { border-top: 1px dashed var(--line); padding-top: 12px; margin-top: 12px; }
+    .item:first-of-type { border-top: 0; padding-top: 10px; }
+    .badge {
+      display: inline-block; font-size: 11px; padding: 1px 8px; border-radius: 999px;
+      background: #fdecee; color: var(--danger); margin-right: 6px;
+    }
+    .badge.half { background: #fff4e6; color: #97621a; }
+    .stem { font-size: 14.5px; margin: 6px 0; white-space: pre-wrap; word-break: break-word; }
+    .line { font-size: 13.5px; margin-top: 3px; }
+    .line b { font-weight: 600; }
+    .line.mine b { color: var(--danger); }
+    .line.right b { color: var(--ok); }
+    .analysis {
+      margin-top: 8px; padding: 10px 12px; border-radius: 8px;
+      background: #f7f9ff; border: 1px solid #e2e9ff; font-size: 13px; color: #33405c;
+      white-space: pre-wrap;
+    }
+    .comment { margin-top: 8px; font-size: 13px; color: #97621a; }
+    .empty { text-align: center; color: var(--muted); padding: 60px 20px; }
+    .empty strong { display: block; color: #4a5263; margin-bottom: 8px; font-size: 15px; }
+    .empty a { color: var(--accent); text-decoration: none; }
+    .gone { color: var(--muted); font-size: 13px; }
+  </style>
+</head>
+<body>
+  <div class="top">
+    <h1>我的错题本</h1>
+    <button class="clear" type="button" id="btnClear">清空记录</button>
+  </div>
+  <div class="main" id="app"></div>
+
+  <script>
+    const KEY = 'hubei-wrongbook';
+    const app = document.getElementById('app');
+
+    const escapeHtml = (s) =>
+      String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+
+    function formatTime(ts) {
+      const d = new Date(ts);
+      const p = (n) => String(n).padStart(2, '0');
+      return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+    }
+
+    function readRecords() {
+      try {
+        return JSON.parse(localStorage.getItem(KEY) || '[]');
+      } catch {
+        return [];
+      }
+    }
+
+    async function load() {
+      const records = readRecords();
+      if (!records.length) {
+        app.innerHTML = `<div class="empty"><strong>还没有记录</strong>做完一份练习卷后，错题会自动记在这里。<br /><a href="/">返回首页</a></div>`;
+        return;
+      }
+
+      const results = await Promise.all(
+        records.map(async (rec) => {
+          try {
+            const res = await fetch(`/api/papers/${encodeURIComponent(rec.paperId)}/submissions/${encodeURIComponent(rec.subId)}`);
+            if (!res.ok) return { rec, gone: true };
+            return { rec, data: await res.json() };
+          } catch {
+            return { rec, gone: true };
+          }
+        }),
+      );
+
+      app.innerHTML = results.map(renderSheet).join('');
+    }
+
+    function renderSheet({ rec, data, gone }) {
+      const head = `<div class="sheet-head">
+        <h2>${escapeHtml(rec.title || '练习卷')}</h2>
+        <span class="sheet-meta">${formatTime(rec.at)} · 正确率 ${rec.rate || 0}%</span>
+      </div>`;
+
+      if (gone || !data) {
+        return `<section class="sheet">${head}<p class="gone">这份卷子已被老师删除，记录无法查看。</p></section>`;
+      }
+
+      const wrongs = data.items.filter((it) => it.ok === false || (it.score === 0.5));
+      if (!wrongs.length) {
+        return `<section class="sheet">${head}<p class="gone">这次没有错题，保持住。</p></section>`;
+      }
+
+      const items = wrongs
+        .map((it) => {
+          const half = it.score === 0.5;
+          const badge = half ? '<span class="badge half">部分正确</span>' : '<span class="badge">错误</span>';
+          const answerLine =
+            it.type === 'operation'
+              ? `<div class="line right">参考答案：<br /><b>${escapeHtml(it.answer || '暂无')}</b></div>`
+              : `<div class="line mine">你的答案：<b>${escapeHtml(it.your || '未作答')}</b></div>
+                 <div class="line right">正确答案：<b>${escapeHtml(it.answer || '暂无')}</b></div>`;
+          const analysis = it.analysis ? `<div class="analysis">${escapeHtml(it.analysis)}</div>` : '';
+          const comment = it.comment ? `<div class="comment">老师评语：${escapeHtml(it.comment)}</div>` : '';
+          return `<div class="item">
+            <div>${badge}<span class="sheet-meta">第 ${it.index} 题</span></div>
+            <div class="stem">${escapeHtml(it.stem)}</div>
+            ${answerLine}
+            ${analysis}
+            ${comment}
+          </div>`;
+        })
+        .join('');
+
+      return `<section class="sheet">${head}${items}</section>`;
+    }
+
+    document.getElementById('btnClear').addEventListener('click', () => {
+      if (!confirm('清空本机的错题记录？不会影响老师那边的答卷数据。')) return;
+      localStorage.removeItem(KEY);
+      load();
+    });
+
+    load();
+  </script>
+</body>
+</html>

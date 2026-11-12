@@ -1,0 +1,25 @@
+# 依赖
+node_modules/
+
+# 本机配置：DeepSeek Key 等，绝不入库
+config.json
+config.local.json
+.env
+.env.*
+
+# 只放行配置模板
+!config.example.json
+
+# 本地题库 / 练习卷 / 答卷（属于使用者的教学数据，不随仓库分发）
+data/questions.json
+data/papers.json
+data/submissions.json
+data/*.backup-*.json
+data/*.tmp
+
+# 系统与编辑器
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.log

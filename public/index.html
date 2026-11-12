@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>湖北技能高考 · 计算机类错题工作台</title>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">错</span>
+    <div>
+      <h1>计算机类错题工作台</h1>
+      <p class="sub">2026 湖北省技能高考 · 9 个模块 · 490 分</p>
+    </div>
+  </div>
+  <div class="actions">
+    <span class="badge" id="totalBadge">题库 0 题</span>
+    <button id="btnPaper" class="ghost" type="button">生成练习卷</button>
+    <button id="btnExplain" class="ghost" type="button">补全解析</button>
+    <button id="btnImport" class="ghost" type="button">AI 批量导入</button>
+    <button id="btnNew" class="primary" type="button">新增题目</button>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar">
+    <h2>知识模块</h2>
+    <ul id="moduleList" class="module-list"></ul>
+
+    <div class="side-block">
+      <div class="label-row"><span>已生成练习卷</span><span class="muted" id="paperCount"></span></div>
+      <ul id="paperList" class="paper-list"></ul>
+    </div>
+
+    <div class="side-note">
+      <strong>题量来源</strong>
+      <p>题库全部来自老师录入的试卷与错题，不抓取第三方题库。</p>
+    </div>
+  </aside>
+
+  <main class="main">
+    <section class="toolbar">
+      <input id="search" type="search" placeholder="搜索题干、解析或来源" />
+      <select id="typeFilter">
+        <option value="">全部题型</option>
+        <option value="single">选择题</option>
+        <option value="judge">判断题</option>
+        <option value="operation">操作题</option>
+      </select>
+      <span class="spacer"></span>
+      <span class="muted" id="resultInfo"></span>
+    </section>
+
+    <section id="list" class="list"></section>
+    <nav id="pager" class="pager"></nav>
+  </main>
+</div>
+
+<!-- 编辑弹窗 -->
+<div class="modal" id="editorModal" hidden>
+  <div class="modal-card">
+    <header>
+      <h2 id="editorTitle">新增题目</h2>
+      <button class="close" type="button" data-close>×</button>
+    </header>
+    <form id="editorForm" class="form">
+      <div class="row">
+        <label>知识模块
+          <select id="fModule" required></select>
+        </label>
+        <label>题型
+          <select id="fType">
+            <option value="single">选择题</option>
+            <option value="judge">判断题</option>
+            <option value="operation">操作题</option>
+          </select>
+        </label>
+        <label>难度
+          <select id="fDifficulty">
+            <option value="1">1 很容易</option>
+            <option value="2">2 较容易</option>
+            <option value="3" selected>3 中等</option>
+            <option value="4">4 较难</option>
+            <option value="5">5 很难</option>
+          </select>
+        </label>
+      </div>
+
+      <label>题干
+        <textarea id="fStem" rows="4" required placeholder="粘贴或输入题干，代码题请保留缩进"></textarea>
+      </label>
+
+      <div id="optionsBlock">
+        <div class="label-row"><span>选项</span><button type="button" class="link" id="addOption">+ 添加选项</button></div>
+        <div id="optionRows" class="option-rows"></div>
+      </div>
+
+      <div class="row">
+        <label>答案
+          <input id="fAnswer" placeholder="选择题填 A；判断题填 对/错；操作题写关键步骤" />
+        </label>
+        <label>来源
+          <input id="fSource" placeholder="例如：2026 样卷 第 3 题" />
+        </label>
+      </div>
+
+      <label>解析
+        <textarea id="fAnalysis" rows="3" placeholder="解题思路、易错点"></textarea>
+      </label>
+
+      <div>
+        <div class="label-row"><span>对应知识点</span></div>
+        <div id="pointList" class="chips"></div>
+      </div>
+
+      <div>
+        <div class="label-row"><span>常见错因</span></div>
+        <div id="reasonList" class="chips"></div>
+      </div>
+
+      <footer class="modal-actions">
+        <button type="button" class="danger" id="btnDelete" hidden>删除</button>
+        <span class="spacer"></span>
+        <button type="button" class="ghost" data-close>取消</button>
+        <button type="submit" class="primary">保存</button>
+      </footer>
+    </form>
+  </div>
+</div>
+
+<!-- 批量导入弹窗 -->
+<div class="modal" id="importModal" hidden>
+  <div class="modal-card wide">
+    <header>
+      <h2>AI 批量导入</h2>
+      <button class="close" type="button" data-close>×</button>
+    </header>
+    <div class="form">
+      <p class="hint">支持整段粘贴题目文本，也支持整份试卷的图片或 PDF。识别结果先预览，确认后再入库。</p>
+
+      <label class="file-drop">
+        <input id="fileInput" type="file" accept="image/png,image/jpeg,image/webp,application/pdf" multiple />
+        <strong>选择试卷图片 / PDF</strong>
+        <span class="hint">可一次多选。图片会自动压缩到 1600px 再上传，一页约 10–30 秒；扫描版 PDF 按页并发识别，单次最多 10 页。</span>
+      </label>
+      <ul id="fileList" class="file-list"></ul>
+
+      <textarea id="importText" rows="8" placeholder="1. 下列关于内存双通道的说法正确的是（ ）&#10;A. ...&#10;B. ...&#10;答案：B"></textarea>
+      <div class="modal-actions">
+        <span class="muted" id="importStatus"></span>
+        <span class="spacer"></span>
+        <button type="button" class="ghost" id="btnParse">开始识别</button>
+        <button type="button" class="primary" id="btnSaveDrafts" disabled>全部入库</button>
+      </div>
+      <div id="draftList" class="drafts"></div>
+    </div>
+  </div>
+</div>
+
+<!-- 出卷弹窗 -->
+<div class="modal" id="paperModal" hidden>
+  <div class="modal-card">
+    <header>
+      <h2>生成练习卷</h2>
+      <button class="close" type="button" data-close>×</button>
+    </header>
+    <div class="form">
+      <label>卷子名称
+        <input id="pTitle" placeholder="留空则按日期自动命名" />
+      </label>
+
+      <div>
+        <div class="label-row"><span>知识模块（不选表示全部）</span></div>
+        <div id="pModules" class="chips"></div>
+      </div>
+
+      <div>
+        <div class="label-row"><span>知识点（可选，进一步缩小范围）</span></div>
+        <div id="pPoints" class="chips scroll-box"></div>
+      </div>
+
+      <div class="row counts">
+        <label>选择题数量<input id="cSingle" type="number" min="0" max="100" value="10" /></label>
+        <label>判断题数量<input id="cJudge" type="number" min="0" max="100" value="5" /></label>
+        <label>操作题数量<input id="cOper" type="number" min="0" max="100" value="1" /></label>
+      </div>
+
+      <div class="modal-actions">
+        <span class="muted" id="pStatus"></span>
+        <span class="spacer"></span>
+        <button type="button" class="ghost" data-close>取消</button>
+        <button type="button" class="primary" id="btnGen">生成</button>
+      </div>
+
+      <div id="paperResult" class="drafts"></div>
+    </div>
+  </div>
+</div>
+
+<!-- 答卷统计弹窗 -->
+<div class="modal" id="statsModal" hidden>
+  <div class="modal-card wide">
+    <header>
+      <h2 id="statsTitle">答卷统计</h2>
+      <button class="close" type="button" data-close>×</button>
+    </header>
+    <div class="form">
+      <div class="stat-row" id="statsSummary"></div>
+
+      <h3 class="sec-title">错题排行</h3>
+      <div id="wrongRank" class="rank-list"></div>
+
+      <h3 class="sec-title">提交记录</h3>
+      <div id="subTable" class="table-wrap"></div>
+
+      <div class="modal-actions">
+        <span class="muted" id="statsHint"></span>
+        <span class="spacer"></span>
+        <details class="qr-box">
+          <summary>扫码答题</summary>
+          <div class="qr" id="statsQr"></div>
+        </details>
+        <a class="btn-link" id="statsPrint" target="_blank">打印试卷</a>
+        <a class="btn-link" id="statsQuiz" target="_blank">学生答题页</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 操作题批改弹窗 -->
+<div class="modal" id="gradeModal" hidden>
+  <div class="modal-card wide">
+    <header>
+      <h2 id="gradeTitle">批改操作题</h2>
+      <button class="close" type="button" data-close>×</button>
+    </header>
+    <div class="form">
+      <div class="stat-row" id="gradeSummary"></div>
+      <div id="gradeList" class="grade-list"></div>
+      <div class="modal-actions">
+        <span class="muted" id="gradeStatus"></span>
+        <span class="spacer"></span>
+        <button type="button" class="ghost" data-close>关闭</button>
+        <button type="button" class="primary" id="btnSaveGrade">保存批改</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/qrcode.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>
